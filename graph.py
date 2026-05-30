@@ -5,23 +5,11 @@ from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel
 
 from classify_claim import ClaimClassification
+from document_checking import document_checking_node
 from state import ClaimState
 from llms import chat_llm
 from prompts import CLAIM_EXTRACTION_PROMPT
-
-
-def read_multiline(prompt: str) -> str:
-    """Collect input lines until the user submits a blank line."""
-    print(prompt)
-    lines = []
-    while True:
-        line = input()
-        if line == "":
-            if lines:
-                break
-        else:
-            lines.append(line)
-    return "\n".join(lines)
+from utils import read_multiline
 
 
 class ClaimExtraction(BaseModel):
@@ -93,8 +81,10 @@ def classify_claim_node(state: ClaimState) -> ClaimState:
 def build_graph():
     graph = StateGraph(ClaimState)
     graph.add_node("classify_claim", classify_claim_node)
+    graph.add_node("document_checking", document_checking_node)
     graph.set_entry_point("classify_claim")
-    graph.add_edge("classify_claim", END)
+    graph.add_edge("classify_claim", "document_checking")
+    graph.add_edge("document_checking", END)
     return graph.compile()
 
 
@@ -108,6 +98,7 @@ def main():
         "member_id": None,
         "claimed_amount": None,
         "classification": None,
+        "collected_documents": None,
     })
 
     print("\n--- Final Claim State ---")

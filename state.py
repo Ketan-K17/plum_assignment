@@ -6,3 +6,4 @@ class ClaimState(TypedDict):
     member_id: Optional[str]
     claimed_amount: Optional[float]
     classification: Optional[ClaimClassification]
+    collected_documents: Optional[List[str]]
