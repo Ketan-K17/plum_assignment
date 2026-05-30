@@ -1,5 +1,5 @@
 from typing import List
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from langchain_core.messages import SystemMessage, HumanMessage
 
@@ -132,7 +132,22 @@ def document_processing_node(state: ClaimState) -> ClaimState:
                         normalized_date = _parse_date_to_iso_format(str(field_value))
 
                         if normalized_date:
-                            # Compare with policy date range
+                            # Check if issue_date is within first 30 days of policy start date
+                            policy_start = datetime.strptime(policy_start_date, "%Y-%m-%d")
+                            thirty_days_after_start = policy_start + timedelta(days=30)
+                            issue_date_obj = datetime.strptime(normalized_date, "%Y-%m-%d")
+                            print(f"policy_start : {policy_start}")
+                            print(f"thirty_days_after_start : {thirty_days_after_start}")
+                            print(f"issue_date_obj : {issue_date_obj}")
+
+                            # check if issue date within first 30 days of policy start
+                            if policy_start <= issue_date_obj <= thirty_days_after_start:
+                                return{
+                                    "claim_verdict": ClaimVerdictEnum.REJECTED,
+                                    "claim_decision_reason": f"{date_field_name} of {doc["document_type"]} ({field_value}) Document within 30 days of policy start date. REJECTING claim."
+                                }
+
+                            # check if issue date outside policy date range
                             if normalized_date < policy_start_date or normalized_date > policy_end_date:
                                 return{
                                     "claim_verdict": ClaimVerdictEnum.REJECTED,
