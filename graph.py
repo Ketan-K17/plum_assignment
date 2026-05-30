@@ -1,15 +1,15 @@
 from typing import TypedDict, Optional, List
 
+from langchain_core import language_models
 from langgraph.graph import StateGraph, END
 from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel
 
 from classify_claim import ClaimClassification
 from document_checking import document_checking_node
-from langfuse_utils import langfuse_handler
+from langfuse_utils import langfuse_handler, langfuse_client
 from state import ClaimState
 from llms import chat_llm
-from prompts import CLAIM_EXTRACTION_PROMPT
 from utils import read_multiline
 
 
@@ -27,14 +27,15 @@ def classify_claim_node(state: ClaimState) -> ClaimState:
     classification: Optional[ClaimClassification] = state.get("classification")
     conversation_history: List[str] = list(state.get("conversation_history", []))
 
+    prompt = langfuse_client.get_prompt("CLAIM_EXTRACTION_PROMPT")
     extraction_chain = PromptTemplate(
-        template=CLAIM_EXTRACTION_PROMPT,
+        template=prompt.get_langchain_prompt(),
         input_variables=["user_query"]
     ) | chat_llm.with_structured_output(ClaimExtraction)
 
     while True:
         combined_text = "\n".join(conversation_history)
-        extraction: ClaimExtraction = extraction_chain.invoke({"user_query": combined_text})
+        extraction: ClaimExtraction = extraction_chain.invoke({"user_query": combined_text}, config={"metadata": {"langfuse_prompt": prompt}})
 
         if extraction.member_id and not member_id:
             member_id = extraction.member_id

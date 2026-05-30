@@ -1,13 +1,13 @@
 from typing import List, Optional
 
 from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel
 
 from llms import chat_llm
 from state import ClaimState
 from utils import encode_file_as_images
-from prompts import GENERIC_DOCUMENT_PROMPT
-from langfuse_utils import langfuse_handler
+from langfuse_utils import langfuse_client, langfuse_handler
 
 CLAIM_REQUIRED_DOCS = {
     "CONSULTATION": ["PRESCRIPTION", "HOSPITAL_BILL"],
@@ -63,21 +63,28 @@ def document_checking_node(state: ClaimState) -> ClaimState:
     claim_category = classification.claim_category
     collected_documents: List[str] = list(state.get("collected_documents") or [])
 
-    required_docs = CLAIM_REQUIRED_DOCS[claim_category]
-
     structured_llm = chat_llm.with_structured_output(DocumentVerification)
 
-    system_content = (
-        GENERIC_DOCUMENT_PROMPT
-        + f"\n\nFor this {claim_category} claim, the REQUIRED documents are: {', '.join(required_docs)}."
-        + "\n\nThe user will upload document images. Examine each image carefully and identify which document types are present."
-        + "\n\nIMPORTANT: Only the documents listed above as REQUIRED should be uploaded. If you identify a document type that is NOT in the required list (e.g., a LAB_REPORT when only PRESCRIPTION and HOSPITAL_BILL are needed), mention this in your message and ask the user to upload only the required documents."
-        + "\nReturn structured JSON with:"
-        + "\n- documents_found: list of REQUIRED document type strings clearly present in the images"
-        + "\n- documents_missing: list of REQUIRED document type strings not found"
-        + "\n- all_complete: true only when every required document is accounted for"
-        + "\n- message: friendly message describing what is still needed, or if they uploaded non-required documents, guide them to upload only what's needed (empty string if all_complete is true)"
-    )
+    required_docs = CLAIM_REQUIRED_DOCS[claim_category]
+    req_docs_string = (', '.join(required_docs))
+
+    generic_document_prompt = langfuse_client.get_prompt("GENERIC_DOCUMENT_PROMPT")
+
+    # system_content = (
+    #     {{generic_document_prompt}}
+    #     + f"\n\nFor this {{claim_category}} claim, the REQUIRED documents are: {{req_docs_string}}."
+    #     + "\n\nThe user will upload document images. Examine each image carefully and identify which document types are present."
+    #     + "\n\nIMPORTANT: Only the documents listed above as REQUIRED should be uploaded. If you identify a document type that is NOT in the required list (e.g., a LAB_REPORT when only PRESCRIPTION and HOSPITAL_BILL are needed), mention this in your message and ask the user to upload only the required documents."
+    #     + "\nReturn structured JSON with:"
+    #     + "\n- documents_found: list of REQUIRED document type strings clearly present in the images"
+    #     + "\n- documents_missing: list of REQUIRED document type strings not found"
+    #     + "\n- all_complete: true only when every required document is accounted for"
+    #     + "\n- message: friendly message describing what is still needed, or if they uploaded non-required documents, guide them to upload only what's needed (empty string if all_complete is true)"
+    # )
+
+    system_content_langfuse_prompt = langfuse_client.get_prompt("DOCUMENT_CHECKING_PROMPT")
+    system_content_langchain_prompt = PromptTemplate.from_template(system_content_langfuse_prompt.get_langchain_prompt())
+    system_content = system_content_langchain_prompt.format(generic_document_prompt=generic_document_prompt.get_langchain_prompt(), claim_category=claim_category, req_docs_string=req_docs_string)
 
     while True:
         still_needed = [doc for doc in required_docs if doc not in collected_documents]
@@ -110,7 +117,7 @@ def document_checking_node(state: ClaimState) -> ClaimState:
             HumanMessage(content=content),
         ]
 
-        verification: DocumentVerification = structured_llm.invoke(messages)
+        verification: DocumentVerification = structured_llm.invoke(messages, config={"metadata": {"langfuse_prompt": system_content_langfuse_prompt}})
 
         for doc in verification.documents_found:
             if doc not in collected_documents:
