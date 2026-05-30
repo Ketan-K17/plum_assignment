@@ -7,6 +7,7 @@ from llms import chat_llm
 from state import ClaimState
 from utils import encode_file_as_images
 from prompts import GENERIC_DOCUMENT_PROMPT
+from langfuse_utils import langfuse_handler
 
 CLAIM_REQUIRED_DOCS = {
     "CONSULTATION": ["PRESCRIPTION", "HOSPITAL_BILL"],

@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from classify_claim import ClaimClassification
 from document_checking import document_checking_node
+from langfuse_utils import langfuse_handler
 from state import ClaimState
 from llms import chat_llm
 from prompts import CLAIM_EXTRACTION_PROMPT
@@ -99,7 +100,8 @@ def main():
         "claimed_amount": None,
         "classification": None,
         "collected_documents": None,
-    })
+    },
+    config={"callbacks": [langfuse_handler]})
 
     print("\n--- Final Claim State ---")
     print(f"Member ID     : {final_state['member_id']}")
