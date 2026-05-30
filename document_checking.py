@@ -18,8 +18,6 @@ CLAIM_REQUIRED_DOCS = {
     "ALTERNATIVE_MEDICINE": ["PRESCRIPTION", "HOSPITAL_BILL"],
 }
 
-
-
 class DocumentVerification(BaseModel):
     documents_found: List[str]
     documents_missing: List[str]
@@ -62,6 +60,7 @@ def document_checking_node(state: ClaimState) -> ClaimState:
     classification = state.get("classification")
     claim_category = classification.claim_category
     collected_documents: List[str] = list(state.get("collected_documents") or [])
+    all_uploaded_file_paths: List[str] = list(state.get("all_uploaded_file_paths") or [])
 
     structured_llm = chat_llm.with_structured_output(DocumentVerification)
 
@@ -69,18 +68,6 @@ def document_checking_node(state: ClaimState) -> ClaimState:
     req_docs_string = (', '.join(required_docs))
 
     generic_document_prompt = langfuse_client.get_prompt("GENERIC_DOCUMENT_PROMPT")
-
-    # system_content = (
-    #     {{generic_document_prompt}}
-    #     + f"\n\nFor this {{claim_category}} claim, the REQUIRED documents are: {{req_docs_string}}."
-    #     + "\n\nThe user will upload document images. Examine each image carefully and identify which document types are present."
-    #     + "\n\nIMPORTANT: Only the documents listed above as REQUIRED should be uploaded. If you identify a document type that is NOT in the required list (e.g., a LAB_REPORT when only PRESCRIPTION and HOSPITAL_BILL are needed), mention this in your message and ask the user to upload only the required documents."
-    #     + "\nReturn structured JSON with:"
-    #     + "\n- documents_found: list of REQUIRED document type strings clearly present in the images"
-    #     + "\n- documents_missing: list of REQUIRED document type strings not found"
-    #     + "\n- all_complete: true only when every required document is accounted for"
-    #     + "\n- message: friendly message describing what is still needed, or if they uploaded non-required documents, guide them to upload only what's needed (empty string if all_complete is true)"
-    # )
 
     system_content_langfuse_prompt = langfuse_client.get_prompt("DOCUMENT_CHECKING_PROMPT")
     system_content_langchain_prompt = PromptTemplate.from_template(system_content_langfuse_prompt.get_langchain_prompt())
@@ -94,6 +81,7 @@ def document_checking_node(state: ClaimState) -> ClaimState:
             print(f"  - {doc}")
 
         file_paths = _read_file_paths()
+        all_uploaded_file_paths.extend(file_paths)
         image_blocks = _encode_files(file_paths)
 
         if not image_blocks:
@@ -136,4 +124,5 @@ def document_checking_node(state: ClaimState) -> ClaimState:
     return {
         **state,
         "collected_documents": collected_documents,
+        "all_uploaded_file_paths": all_uploaded_file_paths,
     }

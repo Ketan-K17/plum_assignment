@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from classify_claim import ClaimClassification
 from document_checking import document_checking_node
+from document_processing import document_processing_node
 from langfuse_utils import langfuse_handler, langfuse_client
 from state import ClaimState
 from llms import chat_llm
@@ -84,9 +85,11 @@ def build_graph():
     graph = StateGraph(ClaimState)
     graph.add_node("classify_claim", classify_claim_node)
     graph.add_node("document_checking", document_checking_node)
+    graph.add_node("document_processing", document_processing_node)
     graph.set_entry_point("classify_claim")
     graph.add_edge("classify_claim", "document_checking")
-    graph.add_edge("document_checking", END)
+    graph.add_edge("document_checking", "document_processing")
+    graph.add_edge("document_processing", END)
     return graph.compile()
 
 
@@ -101,6 +104,8 @@ def main():
         "claimed_amount": None,
         "classification": None,
         "collected_documents": None,
+        "all_uploaded_file_paths": None,
+        "extracted_documents": None,
     },
     config={"callbacks": [langfuse_handler]})
 
@@ -110,6 +115,10 @@ def main():
     print(f"Claimed Amount: ₹{final_state['claimed_amount']}")
     print(f"Confidence    : {final_state['classification'].confidence}")
     print(f"Reason        : {final_state['classification'].reason}")
+
+    print("\n--- Extracted Documents ---")
+    for doc in (final_state.get("extracted_documents") or []):
+        print(f"  {doc['document_type']}: {doc['data']}")
     import pdb; pdb.set_trace()
 
 
