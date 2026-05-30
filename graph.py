@@ -6,12 +6,14 @@ from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel
 
 from classify_claim import ClaimClassification
+from decision_making import ClaimDecision, decision_making_node
 from document_checking import document_checking_node
 from document_processing import document_processing_node
 from langfuse_utils import langfuse_handler, langfuse_client
-from state import ClaimState
+from state import ClaimState, ClaimVerdictEnum
 from llms import chat_llm
 from utils import read_multiline
+from share_verdict import share_verdict_node
 
 
 class ClaimExtraction(BaseModel):
@@ -73,6 +75,12 @@ def classify_claim_node(state: ClaimState) -> ClaimState:
     print(f"  Confidence    : {classification.confidence}")
     print(f"  Reason        : {classification.reason}")
 
+    if member_id not in ["EMP001", "EMP002", "EMP003", "EMP004", "EMP005", "EMP006", "EMP007", "EMP008", "EMP009", "EMP010", "DEP001", "DEP002"]:
+        return{
+            "claim_verdict": ClaimVerdictEnum.REJECTED,
+            "claim_decision_reason": "member id does not belong to roster. REJECTING claim."
+        }
+
     return {
         "conversation_history": conversation_history,
         "member_id": member_id,
@@ -81,15 +89,26 @@ def classify_claim_node(state: ClaimState) -> ClaimState:
     }
 
 
+def route_after_classification(state: ClaimState) -> str:
+    """Route to share_verdict if claim is rejected, otherwise continue to document_checking."""
+    if state.get("claim_verdict") == ClaimVerdictEnum.REJECTED:
+        return "share_verdict"
+    return "document_checking"
+
+
 def build_graph():
     graph = StateGraph(ClaimState)
     graph.add_node("classify_claim", classify_claim_node)
     graph.add_node("document_checking", document_checking_node)
     graph.add_node("document_processing", document_processing_node)
+    graph.add_node("decision_making", decision_making_node)
+    graph.add_node("share_verdict", share_verdict_node)
     graph.set_entry_point("classify_claim")
-    graph.add_edge("classify_claim", "document_checking")
+    graph.add_conditional_edges("classify_claim", route_after_classification)
     graph.add_edge("document_checking", "document_processing")
-    graph.add_edge("document_processing", END)
+    graph.add_edge("document_processing", "decision_making")
+    graph.add_edge("decision_making", END)
+    graph.add_edge("share_verdict", END)
     return graph.compile()
 
 
@@ -99,28 +118,9 @@ def main():
 
     app = build_graph()
     final_state: ClaimState = app.invoke({
-        "conversation_history": [initial_input],
-        "member_id": None,
-        "claimed_amount": None,
-        "classification": None,
-        "collected_documents": None,
-        "all_uploaded_file_paths": None,
-        "extracted_documents": None,
+        "conversation_history": [initial_input]
     },
     config={"callbacks": [langfuse_handler]})
-
-    print("\n--- Final Claim State ---")
-    print(f"Member ID     : {final_state['member_id']}")
-    print(f"Claim Type    : {final_state['classification'].claim_category}")
-    print(f"Claimed Amount: ₹{final_state['claimed_amount']}")
-    print(f"Confidence    : {final_state['classification'].confidence}")
-    print(f"Reason        : {final_state['classification'].reason}")
-
-    print("\n--- Extracted Documents ---")
-    for doc in (final_state.get("extracted_documents") or []):
-        print(f"  {doc['document_type']}: {doc['data']}")
-    import pdb; pdb.set_trace()
-
 
 if __name__ == "__main__":
     main()
