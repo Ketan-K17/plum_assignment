@@ -42,6 +42,7 @@ def classify_claim_node(state: ClaimState) -> ClaimState:
 
         if extraction.member_id and not member_id:
             member_id = extraction.member_id
+            member_id = member_id.upper()
         if extraction.claimed_amount is not None and claimed_amount is None:
             claimed_amount = extraction.claimed_amount
         if extraction.claim_category and not classification:
@@ -75,10 +76,16 @@ def classify_claim_node(state: ClaimState) -> ClaimState:
     print(f"  Confidence    : {classification.confidence}")
     print(f"  Reason        : {classification.reason}")
 
-    if member_id not in ["EMP001", "EMP002", "EMP003", "EMP004", "EMP005", "EMP006", "EMP007", "EMP008", "EMP009", "EMP010", "DEP001", "DEP002"]:
+    if member_id.upper() not in ["EMP001", "EMP002", "EMP003", "EMP004", "EMP005", "EMP006", "EMP007", "EMP008", "EMP009", "EMP010", "DEP001", "DEP002"]:
         return{
             "claim_verdict": ClaimVerdictEnum.REJECTED,
             "claim_decision_reason": "member id does not belong to roster. REJECTING claim."
+        }
+
+    if claimed_amount < 500:
+        return{
+            "claim_verdict": ClaimVerdictEnum.REJECTED,
+            "claim_decision_reason": "claimed amount less than lower limit. REJECTING claim."
         }
 
     return {
@@ -88,6 +95,7 @@ def classify_claim_node(state: ClaimState) -> ClaimState:
         "classification": classification,
     }
 
+# Edge Definitions
 
 def route_after_classification(state: ClaimState) -> str:
     """Route to share_verdict if claim is rejected, otherwise continue to document_checking."""
@@ -95,8 +103,14 @@ def route_after_classification(state: ClaimState) -> str:
         return "share_verdict"
     return "document_checking"
 
+def route_after_doc_processing(state: ClaimState) -> str:
+    """Route to share_verdict if claim is rejected, otherwise continue to decision_making."""
+    if state.get("claim_verdict") == ClaimVerdictEnum.REJECTED:
+        return "share_verdict"
+    return "decision_making"
 
 def build_graph():
+    # Nodes
     graph = StateGraph(ClaimState)
     graph.add_node("classify_claim", classify_claim_node)
     graph.add_node("document_checking", document_checking_node)
@@ -104,9 +118,11 @@ def build_graph():
     graph.add_node("decision_making", decision_making_node)
     graph.add_node("share_verdict", share_verdict_node)
     graph.set_entry_point("classify_claim")
+
+    # Edges
     graph.add_conditional_edges("classify_claim", route_after_classification)
     graph.add_edge("document_checking", "document_processing")
-    graph.add_edge("document_processing", "decision_making")
+    graph.add_conditional_edges("document_processing", route_after_doc_processing)
     graph.add_edge("decision_making", END)
     graph.add_edge("share_verdict", END)
     return graph.compile()
@@ -118,9 +134,12 @@ def main():
 
     app = build_graph()
     final_state: ClaimState = app.invoke({
-        "conversation_history": [initial_input]
+        "conversation_history": [initial_input],
+        "policy_start_date": "2024-04-01",
+        "policy_end_date": "2025-03-31"
     },
     config={"callbacks": [langfuse_handler]})
+    import pdb; pdb.set_trace()
 
 if __name__ == "__main__":
     main()

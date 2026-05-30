@@ -8,6 +8,10 @@ class ClaimVerdictEnum(str, Enum):
     MANUAL_REVIEW = "MANUAL_REVIEW"
 
 class ClaimState(TypedDict):
+    # extracted from policy_terms.json
+    policy_start_date: str
+    policy_end_date: str
+
     conversation_history: List[str]
     member_id: Optional[str]
     claimed_amount: Optional[float]

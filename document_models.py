@@ -74,7 +74,7 @@ class PrescriptionDocument(BaseModel):
         description="Patient's gender. Typically written as 'M'/'F', 'Male'/'Female', or 'Male/Female' checkbox. "
                     "Normalize to 'M' or 'F' in output."
     )
-    date: ConfidenceField = Field(
+    issue_date: ConfidenceField = Field(
         description="Date the prescription was issued. "
                     "May appear in DD-MM-YYYY, DD/MM/YYYY, or written form (e.g. '01-Nov-2024'). "
                     "Normalize to ISO format YYYY-MM-DD if possible."
@@ -143,7 +143,7 @@ class HospitalBillDocument(BaseModel):
                     "E.g. 'CMC/2024/08321', 'BILL-001234'. "
                     "Usually labeled 'Bill No:', 'Receipt No:', or 'Invoice No:'."
     )
-    date: ConfidenceField = Field(
+    issue_date: ConfidenceField = Field(
         description="Date the bill was issued. "
                     "May appear in DD-MM-YYYY, DD/MM/YYYY, or written form. "
                     "Normalize to ISO format YYYY-MM-DD if possible."
@@ -331,7 +331,7 @@ class PharmacyBillDocument(BaseModel):
         description="Unique bill number assigned by the pharmacy. "
                     "E.g. 'HFP-24-09821'. Usually labeled 'Bill No:' or 'Invoice No:'."
     )
-    date: ConfidenceField = Field(
+    issue_date: ConfidenceField = Field(
         description="Date the pharmacy bill was issued. "
                     "Normalize to ISO format YYYY-MM-DD if possible."
     )

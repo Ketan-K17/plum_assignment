@@ -1,4 +1,5 @@
 from typing import List
+from datetime import datetime
 
 from langchain_core.messages import SystemMessage, HumanMessage
 
@@ -6,7 +7,7 @@ from document_checking import CLAIM_REQUIRED_DOCS, _encode_files
 from document_models import DOCUMENT_MODEL_MAP
 from langfuse_utils import langfuse_handler
 from llms import chat_llm
-from state import ClaimState
+from state import ClaimState, ClaimVerdictEnum
 
 _CONFIDENCE_RULES = """
 Confidence scoring rules (apply strictly):
@@ -32,6 +33,36 @@ Return a single JSON object matching the required schema exactly.
 
 def _build_system_prompt(doc_type: str) -> str:
     return _SYSTEM_TEMPLATE.format(confidence_rules=_CONFIDENCE_RULES, doc_type=doc_type)
+
+
+def _parse_date_to_iso_format(date_str: str) -> str:
+    """Convert various date formats to yyyy-mm-dd format."""
+    if not date_str:
+        return None
+
+    formats = [
+        "%Y-%m-%d",
+        "%d-%m-%Y",
+        "%m-%d-%Y",
+        "%d/%m/%Y",
+        "%m/%d/%Y",
+        "%Y/%m/%d",
+        "%d.%m.%Y",
+        "%Y.%m.%d",
+        "%B %d, %Y",
+        "%d %B %Y",
+        "%b %d, %Y",
+        "%d %b %Y",
+    ]
+
+    for fmt in formats:
+        try:
+            parsed = datetime.strptime(date_str.strip(), fmt)
+            return parsed.strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+
+    return None
 
 
 def document_processing_node(state: ClaimState) -> ClaimState:
@@ -82,6 +113,31 @@ def document_processing_node(state: ClaimState) -> ClaimState:
         print(f"  Done: {doc_type}")
 
     print(f"\nDocument processing complete. Extracted {len(extracted_documents)} document(s).")
+
+    # Check if any extracted date fields fall outside policy date range
+    policy_start_date = state.get("policy_start_date")
+    policy_end_date = state.get("policy_end_date")
+
+    if policy_start_date and policy_end_date:
+        for doc in extracted_documents:
+            doc_data = doc.get("data", {})
+            for date_field_name in ["issue_date", "report_date", "sample_date"]:
+                if date_field_name in doc_data:
+                    field_info = doc_data[date_field_name]
+                    # Extract value from field (dict with value/confidence)
+                    field_value = field_info.get("value") if isinstance(field_info, dict) else field_info
+
+                    if field_value:
+                        # Convert to yyyy-mm-dd format
+                        normalized_date = _parse_date_to_iso_format(str(field_value))
+
+                        if normalized_date:
+                            # Compare with policy date range
+                            if normalized_date < policy_start_date or normalized_date > policy_end_date:
+                                return{
+                                    "claim_verdict": ClaimVerdictEnum.REJECTED,
+                                    "claim_decision_reason": f"{date_field_name} of {doc["document_type"]} ({field_value}) Document NOT within Policy date range. REJECTING claim."
+                                }
 
     return {
         **state,
