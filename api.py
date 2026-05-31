@@ -5,11 +5,12 @@ import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import BackgroundTasks, FastAPI, HTTPException, UploadFile, File
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from classify_claim import ClaimClassification
+from decision_making import ClaimDecision, decision_making_node
 from document_checking import CLAIM_REQUIRED_DOCS, DocumentVerification, _encode_files
 from document_processing import document_processing_node
 from graph import ClaimExtraction
@@ -93,6 +94,9 @@ def create_session():
         "extracted_documents": None,
         "claim_verdict": None,
         "claim_decision_reason": None,
+        "approved_amount": None,
+        "confidence_score": None,
+        "error": None,
     }
     return SessionResponse(
         session_id=session_id,
@@ -229,6 +233,52 @@ def _run_document_verification(
     )
 
 
+def _run_processing_and_decision(session_id: str) -> None:
+    """Background task: document processing → decision making → update session."""
+    session = sessions.get(session_id)
+    if not session:
+        return
+    try:
+        claim_state = {
+            "classification": session["classification"],
+            "all_uploaded_file_paths": session["all_uploaded_file_paths"],
+            "collected_documents": session["collected_documents"],
+            "policy_start_date": session["policy_start_date"],
+            "policy_end_date": session["policy_end_date"],
+            "today_date": session["today_date"],
+            "member_id": session["member_id"],
+            "claimed_amount": session["claimed_amount"],
+            "conversation_history": session["conversation_history"],
+            "extracted_documents": None,
+            "claim_verdict": None,
+            "claim_decision_reason": None,
+        }
+
+        processing_result = document_processing_node(claim_state)
+
+        if processing_result.get("claim_verdict") == ClaimVerdictEnum.REJECTED:
+            session["status"] = "rejected"
+            session["claim_verdict"] = ClaimVerdictEnum.REJECTED
+            session["claim_decision_reason"] = processing_result.get("claim_decision_reason")
+            return
+
+        session["extracted_documents"] = processing_result.get("extracted_documents")
+        claim_state["extracted_documents"] = session["extracted_documents"]
+
+        decision_result = decision_making_node(claim_state)
+        decision: ClaimDecision = decision_result.get("claim_decision")
+
+        session["claim_verdict"] = decision.decision
+        session["claim_decision_reason"] = decision.reason
+        session["approved_amount"] = decision.approved_amount
+        session["confidence_score"] = decision.confidence_score
+        session["status"] = "complete"
+
+    except Exception as e:
+        session["status"] = "error"
+        session["error"] = str(e)
+
+
 @app.post(
     "/claims/{session_id}/documents",
     openapi_extra={
@@ -251,7 +301,7 @@ def _run_document_verification(
         }
     },
 )
-async def upload_documents(session_id: str, files: list[UploadFile] = File(...)):
+async def upload_documents(session_id: str, background_tasks: BackgroundTasks, files: list[UploadFile] = File(...)):
     session = sessions.get(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -303,44 +353,14 @@ async def upload_documents(session_id: str, files: list[UploadFile] = File(...))
             ),
         }
 
-    # All required documents collected — run document processing
-    # Build a ClaimState-compatible dict from session
-    claim_state = {
-        "classification": session["classification"],
-        "all_uploaded_file_paths": session["all_uploaded_file_paths"],
-        "collected_documents": session["collected_documents"],
-        "policy_start_date": session["policy_start_date"],
-        "policy_end_date": session["policy_end_date"],
-        "today_date": session["today_date"],
-        "member_id": session["member_id"],
-        "claimed_amount": session["claimed_amount"],
-        "conversation_history": session["conversation_history"],
-        "extracted_documents": None,
-        "claim_verdict": None,
-        "claim_decision_reason": None,
-    }
-
-    processing_result = await run_in_threadpool(document_processing_node, claim_state)
-
-    # Merge processing result back into session
-    session["extracted_documents"] = processing_result.get("extracted_documents")
-
-    if processing_result.get("claim_verdict") == ClaimVerdictEnum.REJECTED:
-        session["status"] = "rejected"
-        session["claim_verdict"] = ClaimVerdictEnum.REJECTED
-        session["claim_decision_reason"] = processing_result.get("claim_decision_reason")
-        return {
-            "session_id": session_id,
-            "status": "rejected",
-            "message": f"Claim rejected during document processing: {session['claim_decision_reason']}",
-        }
-
-    session["status"] = "documents_processed"
+    # All required documents collected — kick off processing + decision in the background
+    session["status"] = "processing"
+    background_tasks.add_task(_run_processing_and_decision, session_id)
     return {
         "session_id": session_id,
-        "status": "documents_processed",
+        "status": "processing",
         "verified_documents": session["collected_documents"],
-        "message": "All required documents verified and processed. Ready for final decision.",
+        "message": "All required documents verified. Processing has started — poll GET /claims/{session_id}/status for updates.",
     }
 
 
@@ -359,4 +379,28 @@ def get_status(session_id: str):
         "extracted_documents": session.get("extracted_documents"),
         "claim_verdict": session.get("claim_verdict"),
         "claim_decision_reason": session.get("claim_decision_reason"),
+        "error": session.get("error"),
+    }
+
+
+@app.get("/claims/{session_id}/verdict")
+def get_verdict(session_id: str):
+    session = sessions.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    status = session["status"]
+    if status == "processing":
+        raise HTTPException(status_code=202, detail="Decision is still being processed. Poll GET /claims/{session_id}/status.")
+    if status == "error":
+        raise HTTPException(status_code=500, detail=f"Processing failed: {session.get('error')}")
+    if status not in ("complete", "rejected"):
+        raise HTTPException(status_code=400, detail=f"No verdict available yet. Current status: '{status}'.")
+
+    return {
+        "session_id": session_id,
+        "verdict": session.get("claim_verdict"),
+        "approved_amount": session.get("approved_amount"),
+        "confidence_score": session.get("confidence_score"),
+        "reason": session.get("claim_decision_reason"),
     }
