@@ -11,16 +11,15 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from classify_claim import ClaimClassification
 from decision_making import ClaimDecision, decision_making_node
 from document_checking import CLAIM_REQUIRED_DOCS, DocumentVerification, _encode_files
 from document_processing import document_processing_node
-from graph import ClaimExtraction
+from graph import ClaimExtraction, classify_claim_node
 from langfuse_utils import langfuse_client
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.prompts import PromptTemplate
 from llms import chat_llm
-from state import ClaimVerdictEnum
+from state import ClaimVerdictEnum, ClaimClassification
 
 UPLOAD_DIR = Path("uploads")
 
@@ -100,6 +99,9 @@ def create_session():
         "collected_documents": [],
         "all_uploaded_file_paths": [],
         "extracted_documents": None,
+        "treatment_date": None,
+        "claims_history": [],
+        "simulate_component_failure": False,
         "claim_verdict": None,
         "claim_decision_reason": None,
         "approved_amount": None,
@@ -153,39 +155,66 @@ def post_message(session_id: str, body: MessageRequest):
             session_id=session_id,
         )
 
-    # All fields collected — run the same validation checks as classify_claim_node
-    member_id = session["member_id"]
-    claimed_amount = session["claimed_amount"]
-
-    if member_id not in VALID_MEMBER_IDS:
-        session["status"] = "rejected"
-        session["claim_verdict"] = ClaimVerdictEnum.REJECTED
-        session["claim_decision_reason"] = "Member ID does not belong to roster."
-        return TurnResponse(
-            status="rejected",
-            reply=f"Sorry, member ID '{member_id}' is not on our roster. Claim rejected.",
-            session_id=session_id,
-        )
-
-    if claimed_amount < 500:
-        session["status"] = "rejected"
-        session["claim_verdict"] = ClaimVerdictEnum.REJECTED
-        session["claim_decision_reason"] = "Claimed amount less than minimum limit of ₹500."
-        return TurnResponse(
-            status="rejected",
-            reply=f"Claimed amount ₹{claimed_amount} is below the minimum limit of ₹500. Claim rejected.",
-            session_id=session_id,
-        )
-
-    session["status"] = "ready"
+    # All fields collected — run classification through the graph node
     classification: ClaimClassification = session["classification"]
+    claim_state = {
+        "conversation_history": session["conversation_history"],
+        "member_id": session["member_id"],
+        "claimed_amount": session["claimed_amount"],
+        "classification": classification,
+        "policy_start_date": session["policy_start_date"],
+        "policy_end_date": session["policy_end_date"],
+        "today_date": session["today_date"],
+        "collected_documents": session.get("collected_documents"),
+        "all_uploaded_file_paths": session.get("all_uploaded_file_paths"),
+        "extracted_documents": None,
+        "treatment_date": None,
+        "claims_history": session.get("claims_history") or [],
+        "simulate_component_failure": False,
+        "claim_verdict": None,
+        "claim_decision_reason": None,
+        "approved_amount": None,
+        "confidence_score": None,
+    }
+
+    classification_result = classify_claim_node(claim_state)
+
+    # Update session with classification result
+    verdict = classification_result.get("claim_verdict")
+    if verdict == ClaimVerdictEnum.REJECTED:
+        session["status"] = "rejected"
+        session["claim_verdict"] = verdict
+        session["claim_decision_reason"] = classification_result.get("claim_decision_reason")
+        return TurnResponse(
+            status="rejected",
+            reply=f"Claim rejected: {classification_result.get('claim_decision_reason')}",
+            session_id=session_id,
+        )
+
+    if verdict == ClaimVerdictEnum.MANUAL_REVIEW:
+        session["status"] = "manual_review"
+        session["claim_verdict"] = verdict
+        session["claim_decision_reason"] = classification_result.get("claim_decision_reason")
+        return TurnResponse(
+            status="manual_review",
+            reply=f"Your claim requires manual review: {classification_result.get('claim_decision_reason')}",
+            session_id=session_id,
+        )
+
+    # Normal case: update session and prompt for documents
+    session["status"] = "ready"
+    session["conversation_history"] = classification_result.get("conversation_history", session["conversation_history"])
+    session["member_id"] = classification_result.get("member_id", session["member_id"])
+    session["claimed_amount"] = classification_result.get("claimed_amount", session["claimed_amount"])
+    session["classification"] = classification_result.get("classification", session["classification"])
+
     return TurnResponse(
         status="ready",
         reply=(
             f"Got it! Here's what I've collected:\n"
-            f"  Member ID     : {member_id}\n"
-            f"  Claim Type    : {classification.claim_category}\n"
-            f"  Claimed Amount: ₹{claimed_amount}\n\n"
+            f"  Member ID     : {session['member_id']}\n"
+            f"  Claim Type    : {session['classification'].claim_category}\n"
+            f"  Claimed Amount: ₹{session['claimed_amount']}\n\n"
             "Please upload your supporting documents to proceed."
         ),
         session_id=session_id,
@@ -257,9 +286,14 @@ def _run_processing_and_decision(session_id: str) -> None:
             "member_id": session["member_id"],
             "claimed_amount": session["claimed_amount"],
             "conversation_history": session["conversation_history"],
+            "treatment_date": session.get("treatment_date"),
+            "claims_history": session.get("claims_history") or [],
+            "simulate_component_failure": session.get("simulate_component_failure", False),
             "extracted_documents": None,
             "claim_verdict": None,
             "claim_decision_reason": None,
+            "approved_amount": None,
+            "confidence_score": None,
         }
 
         processing_result = document_processing_node(claim_state)

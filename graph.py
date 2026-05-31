@@ -7,12 +7,11 @@ from langgraph.graph import StateGraph, END
 from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel
 
-from classify_claim import ClaimClassification
 from decision_making import ClaimDecision, decision_making_node
 from document_checking import document_checking_node
 from document_processing import document_processing_node
 from langfuse_utils import langfuse_handler, langfuse_client
-from state import ClaimState, ClaimVerdictEnum
+from state import ClaimState, ClaimVerdictEnum, ClaimClassification
 from llms import chat_llm
 from utils import read_multiline
 from share_verdict import share_verdict_node
@@ -90,24 +89,32 @@ def classify_claim_node(state: ClaimState) -> ClaimState:
             "claim_decision_reason": "claimed amount less than lower limit. REJECTING claim."
         }
 
+    if claimed_amount >= 25000:
+        return{
+            "claim_verdict": ClaimVerdictEnum.MANUAL_REVIEW,
+            "claim_decision_reason": "claimed amount crossed threshold of INR 25,000. ESCALATING claim to Operations.."
+        }
+
     return {
         "conversation_history": conversation_history,
         "member_id": member_id,
         "claimed_amount": claimed_amount,
         "classification": classification,
+        "claim_verdict": None,
     }
 
 # Edge Definitions
 
 def route_after_classification(state: ClaimState) -> str:
     """Route to share_verdict if claim is rejected, otherwise continue to document_checking."""
-    if state.get("claim_verdict") == ClaimVerdictEnum.REJECTED:
+    verdict = state.get("claim_verdict")
+    if verdict == ClaimVerdictEnum.REJECTED or verdict == ClaimVerdictEnum.MANUAL_REVIEW:
         return "share_verdict"
     return "document_checking"
 
 def route_after_doc_processing(state: ClaimState) -> str:
     """Route to share_verdict if claim is rejected, otherwise continue to decision_making."""
-    if state.get("claim_verdict") == ClaimVerdictEnum.REJECTED:
+    if state["claim_verdict"] == ClaimVerdictEnum.REJECTED:
         return "share_verdict"
     return "decision_making"
 
@@ -125,7 +132,7 @@ def build_graph():
     graph.add_conditional_edges("classify_claim", route_after_classification)
     graph.add_edge("document_checking", "document_processing")
     graph.add_conditional_edges("document_processing", route_after_doc_processing)
-    graph.add_edge("decision_making", END)
+    graph.add_edge("decision_making", "share_verdict")
     graph.add_edge("share_verdict", END)
     return graph.compile()
 
