@@ -4,6 +4,14 @@ An AI-powered OPD claims processing system built with LangGraph, FastAPI, and Cl
 
 ---
 
+## Documentation Index
+
+- **[graph.md](graph.md)** — LangGraph workflow diagram, node-by-node reference, state management, and observability setup
+- **[glossary.md](glossary.md)** — Health insurance policy terms explained for first-time readers; reference for understanding `policy_terms.json`
+- **[my_learnings.md](my_learnings.md)** — Post-project reflection covering architectural shortcuts, domain challenges, and what could have been done better
+
+---
+
 ## Architecture Overview
 
 The system has two modes of operation:
