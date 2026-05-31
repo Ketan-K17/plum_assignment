@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Plum Claims</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; background: #f0f2f5; display: flex; justify-content: center; align-items: center; height: 100vh; }
+    #app { width: 600px; height: 90vh; background: #fff; border-radius: 8px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 2px 12px rgba(0,0,0,0.15); }
+    #header { padding: 14px 18px; background: #2563eb; color: #fff; font-weight: 600; font-size: 16px; }
+    #messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+    .bubble { max-width: 80%; padding: 10px 14px; border-radius: 16px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+    .bubble.bot  { background: #f1f5f9; align-self: flex-start; border-bottom-left-radius: 4px; }
+    .bubble.user { background: #2563eb; color: #fff; align-self: flex-end; border-bottom-right-radius: 4px; }
+    .bubble.system { background: #fef9c3; align-self: center; font-size: 12px; color: #713f12; border-radius: 8px; text-align: center; }
+    #upload-area { padding: 12px 16px; border-top: 1px solid #e2e8f0; background: #f8fafc; display: none; flex-direction: column; gap: 8px; }
+    #upload-area label { font-size: 13px; font-weight: 600; color: #374151; }
+    #file-input { font-size: 13px; }
+    #upload-btn { padding: 8px 16px; background: #2563eb; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; align-self: flex-start; }
+    #upload-btn:disabled { opacity: 0.5; cursor: default; }
+    #input-area { display: flex; padding: 12px 16px; border-top: 1px solid #e2e8f0; gap: 8px; }
+    #user-input { flex: 1; padding: 9px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; outline: none; }
+    #send-btn { padding: 9px 16px; background: #2563eb; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; }
+    #send-btn:disabled { opacity: 0.5; cursor: default; }
+  </style>
+</head>
+<body>
+<div id="app">
+  <div id="header">Plum Health Claims</div>
+  <div id="messages"></div>
+
+  <div id="upload-area">
+    <label id="upload-label">Upload your supporting documents</label>
+    <input type="file" id="file-input" multiple accept="image/*,application/pdf" />
+    <button id="upload-btn">Upload</button>
+  </div>
+
+  <div id="input-area">
+    <input id="user-input" type="text" placeholder="Describe your claim..." />
+    <button id="send-btn">Send</button>
+  </div>
+</div>
+
+<script>
+  const messagesEl  = document.getElementById('messages');
+  const userInput   = document.getElementById('user-input');
+  const sendBtn     = document.getElementById('send-btn');
+  const uploadArea  = document.getElementById('upload-area');
+  const uploadLabel = document.getElementById('upload-label');
+  const fileInput   = document.getElementById('file-input');
+  const uploadBtn   = document.getElementById('upload-btn');
+
+  let sessionId = null;
+  let polling   = null;
+
+  // ── helpers ──────────────────────────────────────────────────────────────────
+
+  function addMsg(text, role) {
+    const div = document.createElement('div');
+    div.className = `bubble ${role}`;
+    div.textContent = text;
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  function setInputEnabled(enabled) {
+    userInput.disabled = !enabled;
+    sendBtn.disabled   = !enabled;
+  }
+
+  function showUpload(labelText) {
+    uploadLabel.textContent = labelText || 'Upload your supporting documents';
+    uploadArea.style.display = 'flex';
+    setInputEnabled(false);
+  }
+
+  function hideUpload() {
+    uploadArea.style.display = 'none';
+    fileInput.value = '';
+  }
+
+  function showVerdict(data) {
+    let msg = `Verdict: ${data.verdict}`;
+    if (data.approved_amount != null) msg += `\nApproved amount: ₹${data.approved_amount}`;
+    if (data.confidence_score != null) msg += `\nConfidence: ${(data.confidence_score * 100).toFixed(0)}%`;
+    if (data.reason) msg += `\nReason: ${data.reason}`;
+    addMsg(msg, 'bot');
+    setInputEnabled(false);
+  }
+
+  // ── init ─────────────────────────────────────────────────────────────────────
+
+  async function init() {
+    setInputEnabled(false);
+    try {
+      const res  = await fetch('/claims/session', { method: 'POST' });
+      const data = await res.json();
+      sessionId  = data.session_id;
+      addMsg(data.message, 'bot');
+      setInputEnabled(true);
+      userInput.focus();
+    } catch (e) {
+      addMsg('Failed to start session. Is the server running?', 'system');
+    }
+  }
+
+  // ── messaging ─────────────────────────────────────────────────────────────────
+
+  async function sendMessage() {
+    const text = userInput.value.trim();
+    if (!text || !sessionId) return;
+    addMsg(text, 'user');
+    userInput.value = '';
+    setInputEnabled(false);
+
+    try {
+      const res  = await fetch(`/claims/${sessionId}/message`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ text }),
+      });
+      const data = await res.json();
+      addMsg(data.reply, 'bot');
+
+      if (data.status === 'collecting_info') {
+        setInputEnabled(true);
+        userInput.focus();
+      } else if (data.status === 'rejected') {
+        addMsg('Claim rejected. No further action needed.', 'system');
+      } else if (data.status === 'ready') {
+        showUpload('Upload your supporting documents');
+      }
+    } catch (e) {
+      addMsg('Error sending message.', 'system');
+      setInputEnabled(true);
+    }
+  }
+
+  sendBtn.addEventListener('click', sendMessage);
+  userInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
+
+  // ── document upload ───────────────────────────────────────────────────────────
+
+  uploadBtn.addEventListener('click', async () => {
+    if (!fileInput.files.length) {
+      addMsg('Please select at least one file.', 'system');
+      return;
+    }
+
+    uploadBtn.disabled = true;
+    const form = new FormData();
+    for (const f of fileInput.files) form.append('files', f);
+
+    try {
+      const res  = await fetch(`/claims/${sessionId}/documents`, { method: 'POST', body: form });
+      const data = await res.json();
+
+      if (data.status === 'awaiting_documents') {
+        addMsg(data.message, 'bot');
+        fileInput.value   = '';
+        uploadBtn.disabled = false;
+        uploadLabel.textContent = `Still needed: ${data.still_missing.join(', ')}`;
+      } else if (data.status === 'processing') {
+        hideUpload();
+        addMsg(data.message, 'bot');
+        startPolling();
+      }
+    } catch (e) {
+      addMsg('Error uploading documents.', 'system');
+      uploadBtn.disabled = false;
+    }
+  });
+
+  // ── polling ───────────────────────────────────────────────────────────────────
+
+  function startPolling() {
+    addMsg('Processing your claim…', 'system');
+    polling = setInterval(poll, 3000);
+  }
+
+  async function poll() {
+    try {
+      const res  = await fetch(`/claims/${sessionId}/status`);
+      const data = await res.json();
+
+      if (data.status === 'processing') return; // still waiting
+
+      clearInterval(polling);
+      polling = null;
+
+      if (data.status === 'complete' || data.status === 'rejected') {
+        const vRes  = await fetch(`/claims/${sessionId}/verdict`);
+        const vData = await vRes.json();
+        showVerdict(vData);
+      } else if (data.status === 'error') {
+        addMsg(`Processing error: ${data.error}`, 'system');
+      }
+    } catch (e) {
+      // transient — keep polling
+    }
+  }
+
+  // ── start ─────────────────────────────────────────────────────────────────────
+  init();
+</script>
+</body>
+</html>

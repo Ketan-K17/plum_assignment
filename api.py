@@ -7,6 +7,8 @@ from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, UploadFile, File
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from classify_claim import ClaimClassification
@@ -23,6 +25,12 @@ from state import ClaimVerdictEnum
 UPLOAD_DIR = Path("uploads")
 
 app = FastAPI(title="Plum Claims API")
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+@app.get("/", include_in_schema=False)
+def root():
+    return FileResponse("static/index.html")
 
 VALID_MEMBER_IDS = {
     "EMP001", "EMP002", "EMP003", "EMP004", "EMP005",
