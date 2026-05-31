@@ -325,7 +325,7 @@ def decision_making_node(state: ClaimState) -> ClaimState:
 - Member ID: {member_id}
 - Claim Category: {claim_category}
 - Claimed Amount: ₹{claimed_amount}
-- Today's Date: {date.today().isoformat()}
+- Today's Date: {state['today_date']}
 
 ## Member Details
 {json.dumps(member, indent=2, ensure_ascii=False) if member else "Member not found in roster."}
@@ -381,7 +381,7 @@ Using the policy reference in your system prompt and all claim context above:
 """
 
     structured_llm = chat_llm.with_structured_output(ClaimDecision)
-    messages = [
+    messages = [ 
         SystemMessage(content=_SYSTEM_PROMPT),
         HumanMessage(content=human_content),
     ]

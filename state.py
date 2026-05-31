@@ -25,3 +25,6 @@ class ClaimState(TypedDict):
     # Structured verdict produced by decision_making_node
     claim_verdict: Optional[ClaimVerdictEnum]
     claim_decision_reason: str
+
+    # a date chosen randomly between policy start and end date
+    today_date: str

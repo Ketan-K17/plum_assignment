@@ -13,7 +13,7 @@ _CONFIDENCE_RULES = """
 Confidence scoring rules (apply strictly):
   1.0  — printed/typed text, value fully and clearly readable
   0.8  — handwritten text, value fully and clearly readable
-  0.5–0.2 — partially legible (print or handwriting); use lower end when mostly unreadable
+  0.5-0.2 — partially legible (print or handwriting); use lower end when mostly unreadable
   0.0  — completely unreadable, obscured, or the field is absent from the document
 
 Do NOT round up. If you have any doubt, score lower.

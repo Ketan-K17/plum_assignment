@@ -1,4 +1,6 @@
 from typing import TypedDict, Optional, List
+from datetime import datetime, timedelta
+import random
 
 from langchain_core import language_models
 from langgraph.graph import StateGraph, END
@@ -132,14 +134,22 @@ def main():
     print("Welcome to the Plum Health Insurance Claim System.")
     initial_input = read_multiline("\nPlease describe your claim (press Enter twice when done):")
 
+    policy_start = datetime.strptime("2024-04-01", "%Y-%m-%d")
+    policy_end = datetime.strptime("2025-03-31", "%Y-%m-%d")
+    random_date = policy_start + timedelta(days=random.randint(0, (policy_end - policy_start).days))
+    today_date = random_date.strftime("%Y-%m-%d")
+
+    print(f"TODAY'S DATE: {today_date}")
+
     app = build_graph()
     final_state: ClaimState = app.invoke({
         "conversation_history": [initial_input],
         "policy_start_date": "2024-04-01",
-        "policy_end_date": "2025-03-31"
+        "policy_end_date": "2025-03-31",
+        "today_date": today_date
     },
     config={"callbacks": [langfuse_handler]})
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
 
 if __name__ == "__main__":
     main()
